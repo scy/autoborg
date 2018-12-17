@@ -1,0 +1,181 @@
+#!/bin/sh
+set -e
+
+: ${AUTOBORG_CONFIG_DIR:=$HOME/.autoborg}
+: ${AUTOBORG_CONFIG_FILE:=$AUTOBORG_CONFIG_DIR/config.sh}
+
+msg() {
+	printf '%s: %s\n' autoborg "$*"
+}
+
+warning() {
+	msg "warning: $*" >&2
+}
+
+error() {
+	rc="$1"; shift
+	msg "error $rc: $*" >&2
+	exit "$rc"
+}
+
+mklogdir() {
+	if [ ! -d "$AUTOBORG_LOG_DIR" ]; then
+		msg "creating log directory: $AUTOBORG_LOG_DIR" >&2
+		mkdir -p "$AUTOBORG_LOG_DIR"
+	fi
+}
+
+rc_of_log() {
+	rc="$(tail -n 1 "$1" | awk '/ rc [0-9]+$/ { print $NF }')"
+	if [ -z "$rc" ]; then
+		error 5 "could not read return code of log file $1; aborting"
+	fi
+	printf '%d\n' "$rc"
+}
+
+return_like_log() {
+	rc="$(rc_of_log "$1")"
+	[ "$rc" -ne 0 ] && error "$rc" "borg call failed with code $rc"
+	return "$rc"
+}
+
+last() {
+	count="${1:-1}" # default to 1
+	"$AUTOBORG_BORG" list --short | tail -n "$count"
+}
+
+create() {
+	[ -z "$AUTOBORG_PATHS" ] && error 2 '$AUTOBORG_PATHS is empty; what should I back up?'
+	mklogdir
+	logfile="$AUTOBORG_LOG_DIR/create.$AUTOBORG_ARCHIVE.log"
+
+	exclude_from_param=''
+	if [ -r "$AUTOBORG_EXCLUDE_FROM" ]; then
+		exclude_from_param="--exclude-from $AUTOBORG_EXCLUDE_FROM"
+	fi
+	"$AUTOBORG_BORG" create \
+		--compression "$AUTOBORG_COMPRESSION" \
+		--exclude "$AUTOBORG_LOG_DIR" \
+		--exclude "$AUTOBORG_RSYNC_TS_FILE" \
+		--exclude-caches \
+		$exclude_from_param \
+		--list \
+		--show-rc \
+		--stats \
+		--verbose \
+		"$@" \
+		"$AUTOBORG_REPO::$AUTOBORG_ARCHIVE" \
+		$AUTOBORG_PATHS \
+	2>&1 | tee "$logfile"
+
+	return_like_log "$logfile"
+}
+
+prune() {
+	mklogdir
+	logfile="$AUTOBORG_LOG_DIR/prune.$(date '+%Y-%m-%d--%H:%M:%SZ').log"
+	"$AUTOBORG_BORG" prune \
+		--list \
+		--show-rc \
+		--stats \
+		--verbose \
+		$AUTOBORG_PRUNE_PARAMS \
+		"$@" \
+	2>&1 | tee "$logfile"
+	return_like_log "$logfile"
+}
+
+log_diff() {
+	case "$#" in
+		2)
+			A="$1"
+			B="$2"
+			;;
+		1)
+			B="$1"
+			A="$("$AUTOBORG_BORG" list --short | awk '$0 == "'"$B"'" { print prev } { prev=$0 }')"
+			[ -z "$A" ] && error 3 "could not find the archive that precedes $B"
+			;;
+		0)
+			last2="$(last 2)"
+			A="$(echo "$last2" | head -n 1)"
+			B="$(echo "$last2" | tail -n 1)"
+			;;
+		*)
+			error 1 'logdiff: too many parameters'
+			;;
+	esac
+	diff -u --color=auto "$AUTOBORG_LOG_DIR/$A.log" "$AUTOBORG_LOG_DIR/$B.log"
+}
+
+do_rsync() {
+	if [ -z "$AUTOBORG_RSYNC_TO" ]; then
+		error 4 '$AUTOBORG_RSYNC_TO is empty'
+	fi
+
+	# --delete-after combined with -y detects almost-identical renamed chunks
+	rsync -rtlvy --delete-after "$@" "$BORG_REPO/" "$AUTOBORG_RSYNC_TO"
+	date '+%Y-%m-%d %H:%M:%SZ:' > "$AUTOBORG_RSYNC_TS_FILE"
+}
+
+if [ -r "$AUTOBORG_CONFIG_FILE" ]; then
+	. "$AUTOBORG_CONFIG_FILE"
+else
+	warning "cannot read $AUTOBORG_CONFIG_FILE"
+fi
+
+: ${AUTOBORG_ARCHIVE=$(date -u '+%Y-%m-%d--%H:%M:%SZ')}
+: ${AUTOBORG_BORG:=/usr/bin/borg}
+: ${AUTOBORG_COMPRESSION:=zlib}
+: ${AUTOBORG_EXCLUDE_FROM:=$AUTOBORG_CONFIG_DIR/exclude.list}
+: ${AUTOBORG_LOG_DIR:=$AUTOBORG_CONFIG_DIR/logs}
+: ${AUTOBORG_PRUNE_PARAMS:=--keep-within=48H --keep-daily=14 --keep-weekly=15 --keep-monthly=24}
+: ${AUTOBORG_REPO:=}
+: ${AUTOBORG_RSYNC_REMIND_AFTER_DAYS:=2}
+: ${AUTOBORG_RSYNC_TS_FILE:=$AUTOBORG_CONFIG_DIR/rsync.timestamp}
+
+case "$1" in
+	auto-create)
+		shift
+		create "$@"
+		;;
+	auto-prune)
+		shift
+		prune "$@"
+		;;
+	auto-create-prune)
+		create
+		prune
+		;;
+	auto-create-prune-rsync|acpr|engage)
+		create
+		prune
+		do_rsync
+		;;
+	last)
+		shift
+		last "$@"
+		;;
+	list-last)
+		shift
+		"$AUTOBORG_BORG" list "$@" "::$(last)"
+		;;
+	log-diff)
+		shift
+		log_diff "$@"
+		;;
+	rsync)
+		shift
+		do_rsync "$@"
+		;;
+	rsync-reminder)
+		if [ ! -e "$AUTOBORG_RSYNC_TS_FILE" ]; then
+			warning 'you have never rsynced your autoborg repository'
+		elif [ -n "$(find "$AUTOBORG_RSYNC_TS_FILE" -mtime "+$AUTOBORG_RSYNC_REMIND_AFTER_DAYS")" ]; then
+			warning "last autoborg rsync was more than $AUTOBORG_RSYNC_REMIND_AFTER_DAYS day(s) ago"
+		fi
+		;;
+	*)
+		exec "$AUTOBORG_BORG" "$@"
+		;;
+esac
