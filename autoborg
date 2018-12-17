@@ -64,7 +64,7 @@ create() {
 		--stats \
 		--verbose \
 		"$@" \
-		"$AUTOBORG_REPO::$AUTOBORG_ARCHIVE" \
+		"$BORG_REPO::$AUTOBORG_ARCHIVE" \
 		$AUTOBORG_PATHS \
 	2>&1 | tee "$logfile"
 
@@ -130,7 +130,6 @@ fi
 : ${AUTOBORG_EXCLUDE_FROM:=$AUTOBORG_CONFIG_DIR/exclude.list}
 : ${AUTOBORG_LOG_DIR:=$AUTOBORG_CONFIG_DIR/logs}
 : ${AUTOBORG_PRUNE_PARAMS:=--keep-within=48H --keep-daily=14 --keep-weekly=15 --keep-monthly=24}
-: ${AUTOBORG_REPO:=}
 : ${AUTOBORG_RSYNC_REMIND_AFTER_DAYS:=2}
 : ${AUTOBORG_RSYNC_TS_FILE:=$AUTOBORG_CONFIG_DIR/rsync.timestamp}
 
