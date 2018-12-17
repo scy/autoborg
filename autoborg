@@ -134,15 +134,15 @@ fi
 : ${AUTOBORG_RSYNC_TS_FILE:=$AUTOBORG_CONFIG_DIR/rsync.timestamp}
 
 case "$1" in
-	auto-create)
+	auto-create|ac)
 		shift
 		create "$@"
 		;;
-	auto-prune)
+	auto-prune|ap)
 		shift
 		prune "$@"
 		;;
-	auto-create-prune)
+	auto-create-prune|acp)
 		create
 		prune
 		;;
