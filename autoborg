@@ -105,7 +105,7 @@ log_diff() {
 			error 1 'logdiff: too many parameters'
 			;;
 	esac
-	diff -u --color=auto "$AUTOBORG_LOG_DIR/$A.log" "$AUTOBORG_LOG_DIR/$B.log"
+	diff -u --color=auto "$AUTOBORG_LOG_DIR/create.$A.log" "$AUTOBORG_LOG_DIR/create.$B.log"
 }
 
 do_rsync() {
